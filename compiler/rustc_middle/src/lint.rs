@@ -5,6 +5,7 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::stable_hasher::{HashStable, StableHasher};
 use rustc_errors::{DiagnosticBuilder, DiagnosticId};
 use rustc_hir::HirId;
+use rustc_session::parse::feature_err;
 use rustc_session::lint::{
     builtin::{self, FORBIDDEN_LINT_GROUPS},
     Level, Lint, LintId,
@@ -12,7 +13,7 @@ use rustc_session::lint::{
 use rustc_session::{DiagnosticMessageId, Session};
 use rustc_span::hygiene::MacroKind;
 use rustc_span::source_map::{DesugaringKind, ExpnKind, MultiSpan};
-use rustc_span::{symbol, Span, Symbol, DUMMY_SP};
+use rustc_span::{sym, symbol, Span, Symbol, DUMMY_SP};
 
 /// How a lint level was set.
 #[derive(Clone, Copy, PartialEq, Eq, HashStable, Debug)]
@@ -258,6 +259,39 @@ pub fn struct_lint_level<'s, 'd>(
                     return;
                 }
             }
+            (Level::Expect, span) => {
+                // TODO xFrednet 2021-05-21: How to deal with console -E and do we want that?
+                if let LintLevelSource::Node(_, src, None) = src {
+                    // Feature gate
+                    if !sess.features_untracked().lint_reasons {
+                        feature_err(
+                            &sess.parse_sess,
+                            sym::lint_reasons,
+                            src,
+                            "`expect` lint level is experimental",
+                        )
+                        .emit();
+                        return;
+                    }
+
+                    // Check for reason
+                    sess.struct_span_err(MultiSpan::from_span(src), "expect must have reason")
+                        .emit();
+                    return;
+                }
+                // Same as allow
+                // TODO xFrednet 2021-05-21: Should this be here and should the used
+                // `sess` methods be adjusted?
+                if has_future_breakage {
+                    if let Some(span) = span {
+                        sess.struct_span_allow(span, "")
+                    } else {
+                        sess.struct_allow("")
+                    }
+                } else {
+                    return;
+                }
+            }
             (Level::Warn, Some(span)) => sess.struct_span_warn(span, ""),
             (Level::Warn, None) => sess.struct_warn(""),
             (Level::Deny | Level::Forbid, Some(span)) => sess.struct_span_err(span, ""),
@@ -300,6 +334,7 @@ pub fn struct_lint_level<'s, 'd>(
                     Level::Warn => "-W",
                     Level::Deny => "-D",
                     Level::Forbid => "-F",
+                    Level::Expect => "-E",
                     Level::Allow => "-A",
                 };
                 let hyphen_case_lint_name = name.replace("_", "-");
