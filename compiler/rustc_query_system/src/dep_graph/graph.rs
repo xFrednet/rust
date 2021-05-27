@@ -700,6 +700,7 @@ impl<K: DepKind> DepGraph<K> {
 
             let handle = tcx.dep_context().sess().diagnostic();
 
+            // TODO xFrednet 2021-05-27: Make sure the diagnostics are stored correctly in emit_diagnostic
             for diagnostic in diagnostics {
                 handle.emit_diagnostic(&diagnostic);
             }

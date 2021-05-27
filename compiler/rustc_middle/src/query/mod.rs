@@ -645,6 +645,10 @@ rustc_queries! {
         desc { |tcx| "linting {}", describe_as_module(key, tcx) }
     }
 
+    query check_expect(key: LocalDefId) -> () {
+        desc { |tcx| "expecting lints in {}", describe_as_module(key, tcx) }
+    }
+
     /// Checks the attributes in the module.
     query check_mod_attrs(key: LocalDefId) -> () {
         desc { |tcx| "checking attributes in {}", describe_as_module(key, tcx) }

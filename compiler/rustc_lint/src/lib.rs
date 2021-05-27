@@ -100,11 +100,18 @@ pub use rustc_session::lint::{LintArray, LintPass};
 
 pub fn provide(providers: &mut Providers) {
     levels::provide(providers);
-    *providers = Providers { lint_mod, ..*providers };
+    *providers = Providers { lint_mod, check_expect, ..*providers };
 }
 
 fn lint_mod(tcx: TyCtxt<'_>, module_def_id: LocalDefId) {
     late::late_lint_mod(tcx, module_def_id, BuiltinCombinedModuleLateLintPass::new());
+}
+
+fn check_expect(_tcx: TyCtxt<'_>, _module_def_id: LocalDefId) {
+    // use std::io::Write;
+    // let mut file = std::fs::OpenOptions::new().write(true).append(true).create(true).open("/home/xfrednet/workspace/rust/rust-lang/log.txt").unwrap();
+    // writeln!(file, "# {}", module_def_id).unwrap();
+    // writeln!(file, "  {}", tcx.).unwrap();
 }
 
 macro_rules! pre_expansion_lint_passes {

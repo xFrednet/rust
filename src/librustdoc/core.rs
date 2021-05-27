@@ -267,6 +267,8 @@ crate fn create_config(
         override_queries: Some(|_sess, providers, _external_providers| {
             // Most lints will require typechecking, so just don't run them.
             providers.lint_mod = |_, _| {};
+            // We only want to check for expected lints if we actually linted the code
+            providers.check_expect = |_, _| {};
             // Prevent `rustc_typeck::check_crate` from calling `typeck` on all bodies.
             providers.typeck_item_bodies = |_, _| {};
             // hack so that `used_trait_imports` won't try to call typeck

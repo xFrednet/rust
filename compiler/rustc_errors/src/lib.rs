@@ -810,6 +810,8 @@ impl HandlerInner {
 
         (*TRACK_DIAGNOSTICS)(diagnostic);
 
+        // This might cause some problems later down the line if we don't use the expect level
+        // but actually `Allow` with the expect reasoning. Just something to keep in mind.
         if diagnostic.level == Allow {
             return;
         }

@@ -503,6 +503,7 @@ pub fn check_crate<'tcx, T: LateLintPass<'tcx>>(
                 // Run per-module lints
                 par_iter(&tcx.hir().krate().modules).for_each(|(&module, _)| {
                     tcx.ensure().lint_mod(module);
+                    let _ = tcx.check_expect(module);
                 });
             });
         },
