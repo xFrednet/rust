@@ -212,6 +212,7 @@ fn test_lints_tracking_hash_different_values() {
         (String::from("b"), Level::Warn),
         (String::from("c"), Level::Deny),
         (String::from("d"), Level::Forbid),
+        (String::from("e"), Level::Expect),
     ];
 
     v2.lint_opts = vec![
@@ -219,6 +220,7 @@ fn test_lints_tracking_hash_different_values() {
         (String::from("b"), Level::Warn),
         (String::from("X"), Level::Deny),
         (String::from("d"), Level::Forbid),
+        (String::from("z"), Level::Expect),
     ];
 
     v3.lint_opts = vec![
@@ -226,6 +228,7 @@ fn test_lints_tracking_hash_different_values() {
         (String::from("b"), Level::Warn),
         (String::from("c"), Level::Forbid),
         (String::from("d"), Level::Deny),
+        (String::from("q"), Level::Expect),
     ];
 
     assert_different_hash(&v1, &v2);
@@ -243,6 +246,7 @@ fn test_lints_tracking_hash_different_construction_order() {
         (String::from("b"), Level::Warn),
         (String::from("c"), Level::Deny),
         (String::from("d"), Level::Forbid),
+        (String::from("e"), Level::Expect),
     ];
 
     v2.lint_opts = vec![
@@ -250,6 +254,7 @@ fn test_lints_tracking_hash_different_construction_order() {
         (String::from("c"), Level::Deny),
         (String::from("b"), Level::Warn),
         (String::from("d"), Level::Forbid),
+        (String::from("e"), Level::Expect),
     ];
 
     assert_same_hash(&v1, &v2);
