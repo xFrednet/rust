@@ -31,11 +31,15 @@ use rustc_span::source_map::SourceMap;
 use rustc_span::{Loc, MultiSpan, Span};
 
 use std::borrow::Cow;
+use std::clone::Clone;
 use std::hash::{Hash, Hasher};
+use std::mem::take;
 use std::num::NonZeroUsize;
 use std::panic;
 use std::path::Path;
+use std::result::Result::Ok;
 use std::{error, fmt};
+use std::convert::TryFrom;
 
 use termcolor::{Color, ColorSpec};
 
@@ -333,6 +337,11 @@ struct HandlerInner {
     /// twice.
     emitted_diagnostics: FxHashSet<u128>,
 
+    /// This contains all lint emission information from this compiling session.
+    /// The collection will only contain lints which have been emitted with a level
+    /// above `Allow`.
+    emitted_lints: Vec<LintEmission>,
+
     /// Stashed diagnostics emitted in one stage of the compiler that may be
     /// stolen by other stages (e.g. to improve them and add more information).
     /// The stashed diagnostics count towards the total error count.
@@ -455,6 +464,7 @@ impl Handler {
                 taught_diagnostics: Default::default(),
                 emitted_diagnostic_codes: Default::default(),
                 emitted_diagnostics: Default::default(),
+                emitted_lints: Vec::new(),
                 stashed_diagnostics: Default::default(),
                 future_breakage_diagnostics: Vec::new(),
             }),
@@ -775,6 +785,14 @@ impl Handler {
     pub fn delay_as_bug(&self, diagnostic: Diagnostic) {
         self.inner.borrow_mut().delay_as_bug(diagnostic)
     }
+
+    /// This method takes all lint emission information that have been issued from
+    /// by `HandlerInner` in this session. This will steal the collection from the
+    /// internal handler and should therefore only be used to check for expected
+    /// lints. (RFC 2383)
+    pub fn take_lint_emissions(&self) -> Vec<LintEmission> {
+        take(&mut self.inner.borrow_mut().emitted_lints)
+    }
 }
 
 impl HandlerInner {
@@ -828,6 +846,10 @@ impl HandlerInner {
         // Only emit the diagnostic if we've been asked to deduplicate and
         // haven't already emitted an equivalent diagnostic.
         if !(self.flags.deduplicate_diagnostics && already_emitted(self)) {
+            if let Ok(emission) = LintEmission::try_from(diagnostic) {
+                self.emitted_lints.push(emission);
+            }
+
             self.emitter.emit_diagnostic(diagnostic);
             if diagnostic.is_error() {
                 self.deduplicated_err_count += 1;
@@ -1059,6 +1081,39 @@ impl DelayedDiagnostic {
     fn decorate(mut self) -> Diagnostic {
         self.inner.note(&format!("delayed at {}", self.note));
         self.inner
+    }
+}
+
+/// Used to track all emitted lints to later evaluate if expected lints have been
+/// emitted.
+#[must_use]
+#[derive(Clone, Debug, PartialEq, Hash)]
+pub struct LintEmission {
+    /// The lint level at the point of emission.
+    pub level: Level,
+    
+    /// The lint name that was emitted.
+    pub lint_name: String,
+    
+    /// The primary span of the emission.
+    ///
+    /// Mapped from the `Diagnostic::sort_span` field.
+    pub primary_span: Span,
+}
+
+impl TryFrom<&Diagnostic> for LintEmission {
+    type Error = ();
+
+    fn try_from(diagnostic: &Diagnostic) -> Result<Self, Self::Error> {
+        if let Some(DiagnosticId::Lint {name, ..}) = &diagnostic.code {
+            Ok(LintEmission {
+                level: diagnostic.level,
+                lint_name: name.clone(),
+                primary_span: diagnostic.sort_span,
+            })
+        } else {
+            Err(())
+        }
     }
 }
 
