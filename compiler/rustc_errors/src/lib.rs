@@ -32,6 +32,7 @@ use rustc_span::{Loc, MultiSpan, Span};
 
 use std::borrow::Cow;
 use std::clone::Clone;
+use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
 use std::mem::take;
 use std::num::NonZeroUsize;
@@ -39,7 +40,6 @@ use std::panic;
 use std::path::Path;
 use std::result::Result::Ok;
 use std::{error, fmt};
-use std::convert::TryFrom;
 
 use termcolor::{Color, ColorSpec};
 
@@ -1091,10 +1091,10 @@ impl DelayedDiagnostic {
 pub struct LintEmission {
     /// The lint level at the point of emission.
     pub level: Level,
-    
+
     /// The lint name that was emitted.
     pub lint_name: String,
-    
+
     /// The primary span of the emission.
     ///
     /// Mapped from the `Diagnostic::sort_span` field.
@@ -1105,7 +1105,7 @@ impl TryFrom<&Diagnostic> for LintEmission {
     type Error = ();
 
     fn try_from(diagnostic: &Diagnostic) -> Result<Self, Self::Error> {
-        if let Some(DiagnosticId::Lint {name, ..}) = &diagnostic.code {
+        if let Some(DiagnosticId::Lint { name, .. }) = &diagnostic.code {
             Ok(LintEmission {
                 level: diagnostic.level,
                 lint_name: name.clone(),
