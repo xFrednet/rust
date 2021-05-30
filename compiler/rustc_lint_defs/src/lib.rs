@@ -406,6 +406,16 @@ impl LintBuffer {
     }
 }
 
+#[macro_export]
+macro_rules! validate_lint_level {
+    (Expect) => {
+        compile_error!("`Expect` is not allowed as an initial level for lints")
+    };
+    ($Level: ident) => {
+        $crate::$Level
+    };
+}
+
 /// Declares a static item of type `&'static Lint`.
 ///
 /// See <https://rustc-dev-guide.rust-lang.org/diagnostics.html> for
@@ -449,6 +459,9 @@ impl LintBuffer {
 /// block with `ignore` and manually replace the `{{produces}}` line with the
 /// expected output in a `text` code block.
 ///
+/// The declaration also contains the default lint level after the lint name.
+/// All levels except `Expect` are allowed.
+///
 /// If this is a rustdoc-only lint, then only include a brief introduction
 /// with a link with the text `[rustdoc book]` so that the validator knows
 /// that this is for rustdoc only (see BROKEN_INTRA_DOC_LINKS as an example).
@@ -477,7 +490,7 @@ macro_rules! declare_lint {
         $(#[$attr])*
         $vis static $NAME: &$crate::Lint = &$crate::Lint {
             name: stringify!($NAME),
-            default_level: $crate::$Level,
+            default_level: $crate::validate_lint_level!($Level),
             desc: $desc,
             edition_lint_opts: None,
             is_plugin: false,
@@ -496,7 +509,7 @@ macro_rules! declare_lint {
         $(#[$attr])*
         $vis static $NAME: &$crate::Lint = &$crate::Lint {
             name: stringify!($NAME),
-            default_level: $crate::$Level,
+            default_level: $crate::validate_lint_level!($Level),
             desc: $desc,
             edition_lint_opts: Some(($lint_edition, $crate::Level::$edition_level)),
             report_in_external_macro: false,
@@ -525,7 +538,7 @@ macro_rules! declare_tool_lint {
         $(#[$attr])*
         $vis static $NAME: &$crate::Lint = &$crate::Lint {
             name: &concat!(stringify!($tool), "::", stringify!($NAME)),
-            default_level: $crate::$Level,
+            default_level: $crate::validate_lint_level!($Level),
             desc: $desc,
             edition_lint_opts: None,
             report_in_external_macro: $external,
