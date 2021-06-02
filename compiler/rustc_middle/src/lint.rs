@@ -260,7 +260,7 @@ pub fn struct_lint_level<'s, 'd>(
             }
             (Level::Expect, _) => {
                 // This case is special as we actually allow the lint itself in this context, but
-                // we can not return early like in the case for `Level::Allow` because we still
+                // we can't return early like in the case for `Level::Allow` because we still
                 // need the lint diagnostic to be emitted to `rustc_error::HanderInner`.
                 //
                 // We can also not save the diagnostic here right away as it could for instance

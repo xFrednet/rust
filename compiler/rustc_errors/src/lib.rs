@@ -337,10 +337,9 @@ struct HandlerInner {
     /// twice.
     emitted_diagnostics: FxHashSet<u128>,
 
-    /// This contains all lint emission information from this compiling session.
-    /// The collection will only contain lints which have been emitted with a level
-    /// above `Allow`.
-    emitted_lints: Vec<LintEmission>,
+    /// This contains all lint emission information from this compiling session
+    /// with the emission level `Expect`.
+    expected_lint_emissions: Vec<LintEmission>,
 
     /// Stashed diagnostics emitted in one stage of the compiler that may be
     /// stolen by other stages (e.g. to improve them and add more information).
@@ -464,7 +463,7 @@ impl Handler {
                 taught_diagnostics: Default::default(),
                 emitted_diagnostic_codes: Default::default(),
                 emitted_diagnostics: Default::default(),
-                emitted_lints: Vec::new(),
+                expected_lint_emissions: Vec::new(),
                 stashed_diagnostics: Default::default(),
                 future_breakage_diagnostics: Vec::new(),
             }),
@@ -572,6 +571,11 @@ impl Handler {
     /// Construct a builder at the `Allow` level with the `msg`.
     pub fn struct_allow(&self, msg: &str) -> DiagnosticBuilder<'_> {
         DiagnosticBuilder::new(self, Level::Allow, msg)
+    }
+
+    /// Construct a builder at the `Expect` level with the `msg`.
+    pub fn struct_expect(&self, msg: &str) -> DiagnosticBuilder<'_> {
+        DiagnosticBuilder::new(self, Level::Expect, msg)
     }
 
     /// Construct a builder at the `Error` level at the given `span` and with the `msg`.
@@ -790,8 +794,8 @@ impl Handler {
     /// by `HandlerInner` in this session. This will steal the collection from the
     /// internal handler and should therefore only be used to check for expected
     /// lints. (RFC 2383)
-    pub fn take_lint_emissions(&self) -> Vec<LintEmission> {
-        take(&mut self.inner.borrow_mut().emitted_lints)
+    pub fn steal_expect_lint_emissions(&self) -> Vec<LintEmission> {
+        take(&mut self.inner.borrow_mut().expected_lint_emissions)
     }
 }
 
@@ -846,8 +850,12 @@ impl HandlerInner {
         // Only emit the diagnostic if we've been asked to deduplicate and
         // haven't already emitted an equivalent diagnostic.
         if !(self.flags.deduplicate_diagnostics && already_emitted(self)) {
-            if let Ok(emission) = LintEmission::try_from(diagnostic) {
-                self.emitted_lints.push(emission);
+            if diagnostic.level == Level::Expect {
+                if let Ok(emission) = LintEmission::try_from(diagnostic) {
+                    self.expected_lint_emissions.push(emission);
+                }
+                // Diagnostics with the level `Expect` shouldn't be emitted or effect internal counters.
+                return;
             }
 
             self.emitter.emit_diagnostic(diagnostic);
@@ -1089,9 +1097,6 @@ impl DelayedDiagnostic {
 #[must_use]
 #[derive(Clone, Debug, PartialEq, Hash)]
 pub struct LintEmission {
-    /// The lint level at the point of emission.
-    pub level: Level,
-
     /// The lint name that was emitted.
     pub lint_name: String,
 
@@ -1106,11 +1111,7 @@ impl TryFrom<&Diagnostic> for LintEmission {
 
     fn try_from(diagnostic: &Diagnostic) -> Result<Self, Self::Error> {
         if let Some(DiagnosticId::Lint { name, .. }) = &diagnostic.code {
-            Ok(LintEmission {
-                level: diagnostic.level,
-                lint_name: name.clone(),
-                primary_span: diagnostic.sort_span,
-            })
+            Ok(LintEmission { lint_name: name.clone(), primary_span: diagnostic.sort_span })
         } else {
             Err(())
         }
@@ -1128,6 +1129,7 @@ pub enum Level {
     Cancelled,
     FailureNote,
     Allow,
+    Expect,
 }
 
 impl fmt::Display for Level {
@@ -1153,7 +1155,7 @@ impl Level {
                 spec.set_fg(Some(Color::Cyan)).set_intense(true);
             }
             FailureNote => {}
-            Allow | Cancelled => unreachable!(),
+            Allow | Expect | Cancelled => unreachable!(),
         }
         spec
     }
@@ -1168,6 +1170,7 @@ impl Level {
             FailureNote => "failure-note",
             Cancelled => panic!("Shouldn't call on cancelled error"),
             Allow => panic!("Shouldn't call on allowed error"),
+            Expect => panic!("Shouldn't call on expected error"),
         }
     }
 
