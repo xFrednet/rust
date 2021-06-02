@@ -260,13 +260,13 @@ pub fn struct_lint_level<'s, 'd>(
             }
             (Level::Expect, _) => {
                 // This case is special as we actually allow the lint itself in this context, but
-                // we can not return early like in the case for `Level::Allow` because we still
+                // we can't return early like in the case for `Level::Allow` because we still
                 // need the lint diagnostic to be emitted to `rustc_error::HanderInner`.
                 //
                 // We can also not save the diagnostic here right away as it could for instance
                 // still be cancelled in the decorate closure. All of this means that we simply
                 // create a `DiagnosticBuilder` and continue as we would for warnings.
-                sess.struct_allow("")
+                sess.struct_expect("")
             }
             (Level::Warn, Some(span)) => sess.struct_span_warn(span, ""),
             (Level::Warn, None) => sess.struct_warn(""),
