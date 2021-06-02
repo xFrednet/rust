@@ -35,6 +35,7 @@ use std::borrow::Cow;
 use std::clone::Clone;
 use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
+use std::iter::Iterator;
 use std::mem::take;
 use std::num::NonZeroUsize;
 use std::panic;
@@ -1110,10 +1111,21 @@ impl TryFrom<&Diagnostic> for LintEmission {
 
     fn try_from(diagnostic: &Diagnostic) -> Result<Self, Self::Error> {
         if let Some(DiagnosticId::Lint { name, .. }) = &diagnostic.code {
-            Ok(LintEmission { lint_name: name.clone(), primary_span: diagnostic.sort_span })
-        } else {
-            Err(())
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .append(true)
+                .create(true)
+                .open("/home/xfrednet/workspace/rust/rust-lang/lot.txt")
+                .unwrap();
+            writeln!(file, "- {:?}", diagnostic).unwrap();
+
+            if let Some(primary_span) = diagnostic.span.primary_span() {
+                return Ok(LintEmission { lint_name: name.clone(), primary_span });
+            }
         }
+
+        Err(())
     }
 }
 

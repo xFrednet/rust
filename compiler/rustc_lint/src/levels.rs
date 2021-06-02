@@ -4,7 +4,7 @@ use rustc_ast as ast;
 use rustc_ast::unwrap_or;
 use rustc_ast_pretty::pprust;
 use rustc_data_structures::fx::FxHashMap;
-use rustc_errors::{struct_span_err, Applicability, DiagnosticBuilder};
+use rustc_errors::{struct_span_err, Applicability, DiagnosticBuilder, LintEmission};
 use rustc_hir as hir;
 use rustc_hir::{intravisit, HirId, CRATE_HIR_ID};
 use rustc_middle::hir::map::Map;
@@ -31,7 +31,7 @@ fn lint_levels(tcx: TyCtxt<'_>, (): ()) -> LintLevelMap {
     let store = unerased_lint_store(tcx);
     let crate_attrs = tcx.hir().attrs(CRATE_HIR_ID);
     let levels = LintLevelsBuilder::new(tcx.sess, false, &store, crate_attrs);
-    let mut builder = LintLevelMapBuilder { levels, tcx, store };
+    let mut builder = LintLevelMapBuilder::new(levels, tcx, store);
     let krate = tcx.hir().krate();
 
     builder.levels.id_to_set.reserve(krate.exported_macros.len() + 1);
@@ -45,6 +45,24 @@ fn lint_levels(tcx: TyCtxt<'_>, (): ()) -> LintLevelMap {
     builder.levels.pop(push);
 
     builder.levels.build_map()
+}
+
+fn check_expect_lint(tcx: TyCtxt<'_>, (): ()) -> () {
+    let store = unerased_lint_store(tcx);
+    let crate_attrs = tcx.hir().attrs(CRATE_HIR_ID);
+    let levels = LintLevelsBuilder::new(tcx.sess, false, &store, crate_attrs);
+    let mut builder = LintLevelMapBuilder::new_for_check_expectations(levels, tcx, store);
+    let krate = tcx.hir().krate();
+
+    builder.levels.id_to_set.reserve(krate.exported_macros.len() + 1);
+
+    let push = builder.levels.push(tcx.hir().attrs(hir::CRATE_HIR_ID), &store, true);
+    builder.levels.register_id(hir::CRATE_HIR_ID);
+    for macro_def in krate.exported_macros {
+        builder.levels.register_id(macro_def.hir_id());
+    }
+    intravisit::walk_crate(&mut builder, krate);
+    builder.levels.pop(push);
 }
 
 pub struct LintLevelsBuilder<'s> {
@@ -530,6 +548,12 @@ impl<'s> LintLevelsBuilder<'s> {
         }
     }
 
+    fn get_current_entry(&self) -> &LintSet {
+        self.sets.list.get(self.cur as usize).expect(
+            "This can only `None` if the `LintLevelsBuilder` has been altered from outside sources",
+        )
+    }
+
     /// Called after `push` when the scope of a set of attributes are exited.
     pub fn pop(&mut self, push: BuilderPush) {
         self.cur = push.prev;
@@ -577,14 +601,33 @@ fn is_known_lint_tool(m_item: Symbol, sess: &Session, attrs: &[ast::Attribute]) 
         .any(|name| name == m_item)
 }
 
+#[allow(dead_code)]
 struct LintLevelMapBuilder<'a, 'tcx> {
     levels: LintLevelsBuilder<'tcx>,
     tcx: TyCtxt<'tcx>,
     store: &'a LintStore,
+
+    check_expectations: bool,
+    diagnostics: Vec<LintEmission>,
 }
 
-impl LintLevelMapBuilder<'_, '_> {
-    fn with_lint_attrs<F>(&mut self, id: hir::HirId, f: F)
+impl<'a, 'tcx> LintLevelMapBuilder<'a, 'tcx> {
+    fn new(levels: LintLevelsBuilder<'tcx>, tcx: TyCtxt<'tcx>, store: &'a LintStore) -> Self {
+        Self { levels, tcx, store, check_expectations: false, diagnostics: Default::default() }
+    }
+    #[allow(dead_code)]
+    fn new_for_check_expectations(
+        levels: LintLevelsBuilder<'tcx>,
+        tcx: TyCtxt<'tcx>,
+        store: &'a LintStore,
+    ) -> Self {
+        // Maybe filter here for lints that have been registered in the store. This makes sure that
+        // expectations warnings will not be triggered for tool lints.
+        let diagnostics = tcx.sess.diagnostic().steal_expect_lint_emissions();
+        Self { levels, tcx, store, check_expectations: true, diagnostics }
+    }
+
+    fn with_lint_attrs<F>(&mut self, id: hir::HirId, scope: Span, f: F)
     where
         F: FnOnce(&mut Self),
     {
@@ -595,7 +638,58 @@ impl LintLevelMapBuilder<'_, '_> {
             self.levels.register_id(id);
         }
         f(self);
+
+        if self.check_expectations {
+            self.process_pop(scope);
+        }
+
         self.levels.pop(push);
+    }
+
+    fn process_pop(&mut self, scope: Span) {
+        let entry = self.levels.get_current_entry();
+        let specs = entry.get_specs();
+
+        if self.diagnostics.len() > 0 {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .append(true)
+                .create(true)
+                .open("/home/xfrednet/workspace/rust/rust-lang/log.txt")
+                .unwrap();
+            writeln!(file, "###########################################").unwrap();
+            writeln!(file, "> {:?}", scope).unwrap();
+            writeln!(file, "---").unwrap();
+            writeln!(file, "> {:?}", self.diagnostics).unwrap();
+
+            for (lint, (level, _source)) in specs.iter() {
+                if *level != Level::Expect {
+                    continue;
+                }
+
+                let lint_name = lint.lint.name;
+
+                let mut index = 0;
+                while index < self.diagnostics.len() {
+                    let expectation = &self.diagnostics[index];
+                    if scope.contains(expectation.primary_span)
+                        && expectation.lint_name == lint_name
+                    {
+                        drop(self.diagnostics.swap_remove(index));
+
+                        // The index is not increase here as the entry in the
+                        // index has been changed.
+                        continue;
+                    }
+                    index += 1;
+                }
+            }
+
+            writeln!(file, "> {:?}", self.diagnostics).unwrap();
+        }
+
+        // TODO xFrednet 2021-06-01: Deal with spans inside macros
     }
 }
 
@@ -607,19 +701,19 @@ impl<'tcx> intravisit::Visitor<'tcx> for LintLevelMapBuilder<'_, 'tcx> {
     }
 
     fn visit_param(&mut self, param: &'tcx hir::Param<'tcx>) {
-        self.with_lint_attrs(param.hir_id, |builder| {
+        self.with_lint_attrs(param.hir_id, param.span, |builder| {
             intravisit::walk_param(builder, param);
         });
     }
 
     fn visit_item(&mut self, it: &'tcx hir::Item<'tcx>) {
-        self.with_lint_attrs(it.hir_id(), |builder| {
+        self.with_lint_attrs(it.hir_id(), it.span, |builder| {
             intravisit::walk_item(builder, it);
         });
     }
 
     fn visit_foreign_item(&mut self, it: &'tcx hir::ForeignItem<'tcx>) {
-        self.with_lint_attrs(it.hir_id(), |builder| {
+        self.with_lint_attrs(it.hir_id(), it.span, |builder| {
             intravisit::walk_foreign_item(builder, it);
         })
     }
@@ -632,13 +726,13 @@ impl<'tcx> intravisit::Visitor<'tcx> for LintLevelMapBuilder<'_, 'tcx> {
     }
 
     fn visit_expr(&mut self, e: &'tcx hir::Expr<'tcx>) {
-        self.with_lint_attrs(e.hir_id, |builder| {
+        self.with_lint_attrs(e.hir_id, e.span, |builder| {
             intravisit::walk_expr(builder, e);
         })
     }
 
     fn visit_field_def(&mut self, s: &'tcx hir::FieldDef<'tcx>) {
-        self.with_lint_attrs(s.hir_id, |builder| {
+        self.with_lint_attrs(s.hir_id, s.span, |builder| {
             intravisit::walk_field_def(builder, s);
         })
     }
@@ -649,31 +743,31 @@ impl<'tcx> intravisit::Visitor<'tcx> for LintLevelMapBuilder<'_, 'tcx> {
         g: &'tcx hir::Generics<'tcx>,
         item_id: hir::HirId,
     ) {
-        self.with_lint_attrs(v.id, |builder| {
+        self.with_lint_attrs(v.id, v.span, |builder| {
             intravisit::walk_variant(builder, v, g, item_id);
         })
     }
 
     fn visit_local(&mut self, l: &'tcx hir::Local<'tcx>) {
-        self.with_lint_attrs(l.hir_id, |builder| {
+        self.with_lint_attrs(l.hir_id, l.span, |builder| {
             intravisit::walk_local(builder, l);
         })
     }
 
     fn visit_arm(&mut self, a: &'tcx hir::Arm<'tcx>) {
-        self.with_lint_attrs(a.hir_id, |builder| {
+        self.with_lint_attrs(a.hir_id, a.span, |builder| {
             intravisit::walk_arm(builder, a);
         })
     }
 
     fn visit_trait_item(&mut self, trait_item: &'tcx hir::TraitItem<'tcx>) {
-        self.with_lint_attrs(trait_item.hir_id(), |builder| {
+        self.with_lint_attrs(trait_item.hir_id(), trait_item.span, |builder| {
             intravisit::walk_trait_item(builder, trait_item);
         });
     }
 
     fn visit_impl_item(&mut self, impl_item: &'tcx hir::ImplItem<'tcx>) {
-        self.with_lint_attrs(impl_item.hir_id(), |builder| {
+        self.with_lint_attrs(impl_item.hir_id(), impl_item.span, |builder| {
             intravisit::walk_impl_item(builder, impl_item);
         });
     }
@@ -681,4 +775,5 @@ impl<'tcx> intravisit::Visitor<'tcx> for LintLevelMapBuilder<'_, 'tcx> {
 
 pub fn provide(providers: &mut Providers) {
     providers.lint_levels = lint_levels;
+    providers.check_expect_lint = check_expect_lint;
 }

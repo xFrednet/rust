@@ -71,6 +71,15 @@ pub enum LintSet {
     },
 }
 
+impl LintSet {
+    pub fn get_specs(&self) -> &FxHashMap<LintId, LevelAndSource> {
+        match self {
+            LintSet::CommandLine { specs } => specs,
+            LintSet::Node { specs, .. } => specs,
+        }
+    }
+}
+
 impl LintLevelSets {
     pub fn new() -> Self {
         LintLevelSets { list: Vec::new(), lint_cap: Level::Forbid }
