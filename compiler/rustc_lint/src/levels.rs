@@ -640,57 +640,57 @@ impl<'a, 'tcx> LintLevelMapBuilder<'a, 'tcx> {
         f(self);
 
         if self.check_expectations {
-            self.process_pop(scope);
+            self.process_pop(scope, &push);
         }
 
         self.levels.pop(push);
     }
 
-    fn process_pop(&mut self, scope: Span) {
+    fn process_pop(&mut self, scope: Span, push: &BuilderPush) {
+        if !push.changed {
+            return;
+        }
+
         let entry = self.levels.get_current_entry();
         let specs = entry.get_specs();
 
-        if self.diagnostics.len() > 0 {
-            use std::io::Write;
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .append(true)
-                .create(true)
-                .open("/home/xfrednet/workspace/rust/rust-lang/log.txt")
-                .unwrap();
-            writeln!(file, "###########################################").unwrap();
-            writeln!(file, "> {:?}", scope).unwrap();
-            writeln!(file, "---").unwrap();
-            writeln!(file, "> {:?}", self.diagnostics).unwrap();
-
-            for (lint, (level, _source)) in specs.iter() {
-                if *level != Level::Expect {
-                    continue;
-                }
-
-                let lint_name = lint.lint.name;
-
-                let mut index = 0;
-                while index < self.diagnostics.len() {
-                    let expectation = &self.diagnostics[index];
-                    if scope.contains(expectation.primary_span)
-                        && expectation.lint_name == lint_name
-                    {
-                        drop(self.diagnostics.swap_remove(index));
-
-                        // The index is not increase here as the entry in the
-                        // index has been changed.
-                        continue;
-                    }
-                    index += 1;
-                }
+        for (lint, (level, _source)) in specs.iter() {
+            if *level != Level::Expect {
+                continue;
             }
 
-            writeln!(file, "> {:?}", self.diagnostics).unwrap();
+            let expected_lint = lint.lint.name;
+
+            let mut fulfilled = false;
+            let mut index = 0;
+            while index < self.diagnostics.len() {
+                let lint_emission = &self.diagnostics[index];
+
+                if expected_lint.eq_ignore_ascii_case(&lint_emission.lint_name)
+                    && contains_emission(scope, &lint_emission.lint_span)
+                {
+                    drop(self.diagnostics.swap_remove(index));
+                    fulfilled = true;
+
+                    // The index is not increase here as the entry in the
+                    // index has been changed. We continue here because we
+                    // want to consume all effected diagnostics.
+                    continue;
+                }
+                index += 1;
+            }
+
+            if !fulfilled {
+                todo!("Emit expected lint");
+            }
         }
 
         // TODO xFrednet 2021-06-01: Deal with spans inside macros
     }
+}
+
+fn contains_emission(scope: Span, emission: &MultiSpan) -> bool {
+    emission.primary_spans().iter().any(|span| scope.contains(*span))
 }
 
 impl<'tcx> intravisit::Visitor<'tcx> for LintLevelMapBuilder<'_, 'tcx> {

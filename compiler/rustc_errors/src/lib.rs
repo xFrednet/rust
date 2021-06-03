@@ -1100,10 +1100,11 @@ pub struct LintEmission {
     /// The lint name that was emitted.
     pub lint_name: String,
 
-    /// The primary span of the emission.
+    /// The spans of the emission.
     ///
-    /// Mapped from the `Diagnostic::sort_span` field.
-    pub primary_span: Span,
+    /// FIXME: We should define which span is taken from the diagnostic, this simply takes all spans
+    // until that is defined (xFrednet 2021-06-03)
+    pub lint_span: MultiSpan,
 }
 
 impl TryFrom<&Diagnostic> for LintEmission {
@@ -1111,22 +1112,37 @@ impl TryFrom<&Diagnostic> for LintEmission {
 
     fn try_from(diagnostic: &Diagnostic) -> Result<Self, Self::Error> {
         if let Some(DiagnosticId::Lint { name, .. }) = &diagnostic.code {
-            use std::io::Write;
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .append(true)
-                .create(true)
-                .open("/home/xfrednet/workspace/rust/rust-lang/lot.txt")
-                .unwrap();
-            writeln!(file, "- {:?}", diagnostic).unwrap();
+            Ok(LintEmission { lint_name: name.clone(), lint_span: extract_all_spans(diagnostic) })
+        } else {
+            Err(())
+        }
+    }
+}
 
-            if let Some(primary_span) = diagnostic.span.primary_span() {
-                return Ok(LintEmission { lint_name: name.clone(), primary_span });
+fn extract_all_spans(source: &Diagnostic) -> MultiSpan {
+    let mut result = Vec::new();
+
+    result.extend_from_slice(source.span.primary_spans());
+
+    // Some lints only have span_lints for notes. Example: clashing_extern_declarations
+    result.extend(source.span.span_labels().iter().map(|span_label| span_label.span));
+
+    // Some lints only have a suggestion span. Example: unused_variables
+    for sugg in &source.suggestions {
+        for substitution in &sugg.substitutions {
+            for part in &substitution.parts {
+                result.push(part.span);
             }
         }
-
-        Err(())
     }
+
+    // Some lints only have `SubDiagnostic`s. Example: const_item_mutation
+    for sub in &source.children {
+        result.extend_from_slice(sub.span.primary_spans());
+        result.extend(source.span.span_labels().iter().map(|span_label| span_label.span));
+    }
+
+    MultiSpan::from_spans(result)
 }
 
 #[derive(Copy, PartialEq, Clone, Hash, Debug, Encodable, Decodable)]
