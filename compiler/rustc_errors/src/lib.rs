@@ -34,6 +34,7 @@ use std::borrow::Cow;
 use std::clone::Clone;
 use std::convert::TryFrom;
 use std::hash::{Hash, Hasher};
+use std::iter::Iterator;
 use std::mem::take;
 use std::num::NonZeroUsize;
 use std::panic;
@@ -1100,10 +1101,11 @@ pub struct LintEmission {
     /// The lint name that was emitted.
     pub lint_name: String,
 
-    /// The primary span of the emission.
+    /// The spans of the emission.
     ///
-    /// Mapped from the `Diagnostic::sort_span` field.
-    pub primary_span: Span,
+    /// FIXME: We should define which span is taken from the diagnostic, this simply takes all spans
+    // until that is defined (xFrednet 2021-06-03)
+    pub lint_span: MultiSpan,
 }
 
 impl TryFrom<&Diagnostic> for LintEmission {
@@ -1111,11 +1113,48 @@ impl TryFrom<&Diagnostic> for LintEmission {
 
     fn try_from(diagnostic: &Diagnostic) -> Result<Self, Self::Error> {
         if let Some(DiagnosticId::Lint { name, .. }) = &diagnostic.code {
-            Ok(LintEmission { lint_name: name.clone(), primary_span: diagnostic.sort_span })
+            Ok(LintEmission { lint_name: name.clone(), lint_span: extract_all_spans(diagnostic) })
         } else {
             Err(())
         }
     }
+}
+
+fn extract_all_spans(source: &Diagnostic) -> MultiSpan {
+    let mut result = Vec::new();
+
+    result.append(&mut extract_spans_from_multispan(&source.span));
+
+    // Some lints only have a suggestion span. Example: unused_variables
+    for sugg in &source.suggestions {
+        for substitution in &sugg.substitutions {
+            for part in &substitution.parts {
+                result.push(part.span);
+            }
+        }
+    }
+
+    // Some lints only have `SubDiagnostic`s. Example: const_item_mutation
+    for sub in &source.children {
+        result.append(&mut extract_spans_from_multispan(&sub.span));
+    }
+
+    MultiSpan::from_spans(result)
+}
+
+fn extract_spans_from_multispan(source: &MultiSpan) -> Vec<Span> {
+    let mut result: Vec<Span> = source.primary_spans().into();
+
+    // Some lints only have span_lints for notes. Example: clashing_extern_declarations
+    result.extend(
+        source
+            .span_labels()
+            .iter()
+            .filter(|span| span.is_primary)
+            .map(|span_label| span_label.span),
+    );
+
+    result
 }
 
 #[derive(Copy, PartialEq, Clone, Hash, Debug, Encodable, Decodable)]
