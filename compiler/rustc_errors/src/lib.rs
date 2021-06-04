@@ -1122,10 +1122,7 @@ impl TryFrom<&Diagnostic> for LintEmission {
 fn extract_all_spans(source: &Diagnostic) -> MultiSpan {
     let mut result = Vec::new();
 
-    result.extend_from_slice(source.span.primary_spans());
-
-    // Some lints only have span_lints for notes. Example: clashing_extern_declarations
-    result.extend(source.span.span_labels().iter().map(|span_label| span_label.span));
+    result.append(&mut extract_spans_from_multispan(&source.span));
 
     // Some lints only have a suggestion span. Example: unused_variables
     for sugg in &source.suggestions {
@@ -1138,11 +1135,25 @@ fn extract_all_spans(source: &Diagnostic) -> MultiSpan {
 
     // Some lints only have `SubDiagnostic`s. Example: const_item_mutation
     for sub in &source.children {
-        result.extend_from_slice(sub.span.primary_spans());
-        result.extend(source.span.span_labels().iter().map(|span_label| span_label.span));
+        result.append(&mut extract_spans_from_multispan(&sub.span));
     }
 
     MultiSpan::from_spans(result)
+}
+
+fn extract_spans_from_multispan(source: &MultiSpan) -> Vec<Span> {
+    let mut result: Vec<Span> = source.primary_spans().into();
+
+    // Some lints only have span_lints for notes. Example: clashing_extern_declarations
+    result.extend(
+        source
+            .span_labels()
+            .iter()
+            .filter(|span| span.is_primary)
+            .map(|span_label| span_label.span),
+    );
+
+    result
 }
 
 #[derive(Copy, PartialEq, Clone, Hash, Debug, Encodable, Decodable)]
