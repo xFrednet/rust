@@ -125,6 +125,7 @@ struct LintGroup {
     depr: Option<LintAlias>,
 }
 
+#[derive(Debug)]
 pub enum CheckLintNameResult<'a> {
     Ok(&'a [LintId]),
     /// Lint doesn't exist. Potentially contains a suggestion for a correct lint name.

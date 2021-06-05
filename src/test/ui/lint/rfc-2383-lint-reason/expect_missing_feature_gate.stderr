@@ -1,5 +1,5 @@
 error[E0658]: the `#[expect]` attribute is an experimental feature
-  --> $DIR/expect-missing-feature-gate.rs:3:1
+  --> $DIR/expect_missing_feature_gate.rs:3:1
    |
 LL | #[expect(unused)]
    | ^^^^^^^^^^^^^^^^^

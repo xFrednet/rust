@@ -16,6 +16,10 @@ use rustc_span::symbol::{sym, Symbol};
 use rustc_span::{MultiSpan, Span};
 
 fn check_expect_lint(tcx: TyCtxt<'_>, _: ()) -> () {
+    if !tcx.sess.features_untracked().enabled(sym::lint_reasons) {
+        return;
+    }
+
     let store = unerased_lint_store(tcx);
     let krate = tcx.hir().krate();
 
@@ -76,12 +80,6 @@ struct LintExpectationChecker<'a, 'tcx> {
     sess: &'a Session,
     store: &'a LintStore,
     emitted_lints: Vec<LintIdEmission>,
-}
-
-impl<'a, 'tcx> Drop for LintExpectationChecker<'a, 'tcx> {
-    fn drop(&mut self) {
-        assert!(self.emitted_lints.is_empty())
-    }
 }
 
 impl<'a, 'tcx> LintExpectationChecker<'a, 'tcx> {
@@ -252,18 +250,20 @@ impl<'a, 'tcx> LintExpectationChecker<'a, 'tcx> {
         span: Span,
         id: hir::HirId,
     ) {
-        let level = self.tcx.lint_level_at_node(builtin::UNFULFILLED_LINT_EXPECTATION, id).0;
+        let parent_id = self.tcx.hir().get_parent_node(id);
+        let level = self.tcx.lint_level_at_node(builtin::UNFULFILLED_LINT_EXPECTATION, parent_id).0;
         if level == Level::Expect {
             // This diagnostic is actually expected. It has to be added manually to
             // `self.emitted_lints` because we only collect expected diagnostics at
             // the start. It would therefore not be included in the backlog.
-            if let CheckLintNameResult::Ok(&[self_lint_id]) =
-                self.store.check_lint_name(builtin::UNFULFILLED_LINT_EXPECTATION.name, None)
+            let expect_lint_name = builtin::UNFULFILLED_LINT_EXPECTATION.name.to_ascii_lowercase();
+            if let CheckLintNameResult::Ok(&[expect_lint_id]) =
+                self.store.check_lint_name(&expect_lint_name, None)
             {
-                self.emitted_lints.push(LintIdEmission::new(self_lint_id, span.into()));
+                self.emitted_lints.push(LintIdEmission::new(expect_lint_id, span.into()));
             } else {
                 unreachable!(
-                    "the `unfulfilled_lint_expectation` should be registered when this code is executed"
+                    "the `unfulfilled_lint_expectation` lint should be registered when this code is executed"
                 );
             }
 
@@ -271,13 +271,18 @@ impl<'a, 'tcx> LintExpectationChecker<'a, 'tcx> {
             // stored in cache.
         }
 
-        self.tcx.struct_span_lint_hir(builtin::UNFULFILLED_LINT_EXPECTATION, id, span, |diag| {
-            let mut diag = diag.build("this lint expectation is unfulfilled");
-            if let Some(rationale) = expectation.reason {
-                diag.note(&rationale.as_str());
-            }
-            diag.emit();
-        });
+        self.tcx.struct_span_lint_hir(
+            builtin::UNFULFILLED_LINT_EXPECTATION,
+            parent_id,
+            span,
+            |diag| {
+                let mut diag = diag.build("this lint expectation is unfulfilled");
+                if let Some(rationale) = expectation.reason {
+                    diag.note(&rationale.as_str());
+                }
+                diag.emit();
+            },
+        );
     }
 }
 

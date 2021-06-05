@@ -477,9 +477,14 @@ declare_lint! {
     ///
     /// The `expect` attribute can be removed if this is intended behavior otherwise
     /// it should be investigated why the expected lint is no longer issued.
+    ///
+    /// Part of RFC 2383. The progress is being tracked in [#54503]
+    ///
+    /// [#54503]: https://github.com/rust-lang/rust/issues/54503
     pub UNFULFILLED_LINT_EXPECTATION,
     Warn,
-    "unfulfilled lint expectation"
+    "unfulfilled lint expectation",
+    @feature_gate = rustc_span::sym::lint_reasons;
 }
 
 declare_lint! {
