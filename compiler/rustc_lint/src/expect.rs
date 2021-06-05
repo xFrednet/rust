@@ -10,35 +10,40 @@ use rustc_hir::intravisit;
 use rustc_middle::hir::map::Map;
 use rustc_middle::ty::query::Providers;
 use rustc_middle::ty::TyCtxt;
-use rustc_session::lint::LintId;
+use rustc_session::lint::{Level, LintId};
 use rustc_session::Session;
 use rustc_span::symbol::{sym, Symbol};
 use rustc_span::{MultiSpan, Span};
 
-fn check_expect_lint(tcx: TyCtxt<'_>, (): ()) -> () {
-    // TODO xFrednet 2021-06-05 Take care of crate level attributes
-    // TODO xFrednet 2021-06-05 Deal with macros
+fn check_expect_lint(tcx: TyCtxt<'_>, _: ()) -> () {
     let store = unerased_lint_store(tcx);
     let krate = tcx.hir().krate();
 
     let mut checker = LintExpectationChecker::new(tcx, tcx.sess, store);
-    intravisit::walk_crate(&mut checker, krate);
+    checker.check_crate(krate);
+}
 
-    //    let store = unerased_lint_store(tcx);
-    //    let crate_attrs = tcx.hir().attrs(CRATE_HIR_ID);
-    //    let levels = LintLevelsBuilder::new(tcx.sess, false, &store, crate_attrs);
-    //    let mut builder = LintLevelMapBuilder { levels, tcx, store };
-    //    let krate = tcx.hir().krate();
-    //
-    //    builder.levels.id_to_set.reserve(krate.exported_macros.len() + 1);
-    //
-    //    let push = builder.levels.push(tcx.hir().attrs(hir::CRATE_HIR_ID), &store, true);
-    //    builder.levels.register_id(hir::CRATE_HIR_ID);
-    //    for macro_def in krate.exported_macros {
-    //        builder.levels.register_id(macro_def.hir_id());
-    //    }
-    //    intravisit::walk_crate(&mut builder, krate);
-    //    builder.levels.pop(push);
+/// This is used by the expectation check to define in which scope expectations
+/// count towards fulfilling the expectation.
+#[derive(Debug, Clone, Copy)]
+enum CheckScope {
+    /// The scope it limited to a `Span` only lint emissions within this span
+    /// can fulfill the expectation.
+    Span(Span),
+    /// All emissions in this crate can fulfill this emission. This is used for
+    /// crate expectation attributes.
+    CreateWide,
+}
+
+impl CheckScope {
+    fn includes_span(&self, emission: &MultiSpan) -> bool {
+        match self {
+            CheckScope::Span(scope_span) => {
+                emission.primary_spans().iter().any(|span| scope_span.contains(*span))
+            }
+            CheckScope::CreateWide => true,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -107,7 +112,17 @@ impl<'a, 'tcx> LintExpectationChecker<'a, 'tcx> {
         f(self);
 
         for expect in expectations.drain(..) {
-            self.check_expectation(expect, scope, id);
+            self.check_expectation(expect, CheckScope::Span(scope), id);
+        }
+    }
+
+    fn check_crate(&mut self, krate: &'tcx hir::Crate<'tcx>) {
+        let mut expectations = self.collect_expectations(hir::CRATE_HIR_ID);
+
+        intravisit::walk_crate(self, krate);
+
+        for expect in expectations.drain(..) {
+            self.check_expectation(expect, CheckScope::CreateWide, hir::CRATE_HIR_ID);
         }
     }
 
@@ -203,15 +218,19 @@ impl<'a, 'tcx> LintExpectationChecker<'a, 'tcx> {
         result
     }
 
-    #[allow(unused)]
-    fn check_expectation(&mut self, expectation: LintExpectation, scope: Span, id: hir::HirId) {
+    fn check_expectation(
+        &mut self,
+        expectation: LintExpectation,
+        scope: CheckScope,
+        id: hir::HirId,
+    ) {
         let mut fulfilled = false;
         let mut index = 0;
         while index < self.emitted_lints.len() {
             let lint_emission = &self.emitted_lints[index];
             let lint = &lint_emission.lint_id;
 
-            if expectation.lints.contains(lint) && contains_emission(scope, &lint_emission.span) {
+            if expectation.lints.contains(lint) && scope.includes_span(&lint_emission.span) {
                 drop(self.emitted_lints.swap_remove(index));
                 fulfilled = true;
 
@@ -223,25 +242,43 @@ impl<'a, 'tcx> LintExpectationChecker<'a, 'tcx> {
         }
 
         if !fulfilled {
-            // TODO xFrednet 2021-06-05: This also has to be added to self.emitted_lints if the level == expect
-            self.tcx.struct_span_lint_hir(
-                builtin::UNFULFILLED_LINT_EXPECTATION,
-                id,
-                expectation.attr_span,
-                |diag| {
-                    let mut diag = diag.build("the lint expectation is unfulfilled");
-                    if let Some(rationale) = expectation.reason {
-                        diag.note(&rationale.as_str());
-                    }
-                    diag.emit();
-                },
-            )
+            self.emit_unfulfilled_expectation_lint(&expectation, expectation.attr_span, id);
         }
     }
-}
 
-fn contains_emission(scope: Span, emission: &MultiSpan) -> bool {
-    emission.primary_spans().iter().any(|span| scope.contains(*span))
+    fn emit_unfulfilled_expectation_lint(
+        &mut self,
+        expectation: &LintExpectation,
+        span: Span,
+        id: hir::HirId,
+    ) {
+        let level = self.tcx.lint_level_at_node(builtin::UNFULFILLED_LINT_EXPECTATION, id).0;
+        if level == Level::Expect {
+            // This diagnostic is actually expected. It has to be added manually to
+            // `self.emitted_lints` because we only collect expected diagnostics at
+            // the start. It would therefore not be included in the backlog.
+            if let CheckLintNameResult::Ok(&[self_lint_id]) =
+                self.store.check_lint_name(builtin::UNFULFILLED_LINT_EXPECTATION.name, None)
+            {
+                self.emitted_lints.push(LintIdEmission::new(self_lint_id, span.into()));
+            } else {
+                unreachable!(
+                    "the `unfulfilled_lint_expectation` should be registered when this code is executed"
+                );
+            }
+
+            // The diagnostic will still be emitted as usual to make sure that it's
+            // stored in cache.
+        }
+
+        self.tcx.struct_span_lint_hir(builtin::UNFULFILLED_LINT_EXPECTATION, id, span, |diag| {
+            let mut diag = diag.build("this lint expectation is unfulfilled");
+            if let Some(rationale) = expectation.reason {
+                diag.note(&rationale.as_str());
+            }
+            diag.emit();
+        });
+    }
 }
 
 impl<'tcx> intravisit::Visitor<'tcx> for LintExpectationChecker<'_, 'tcx> {
