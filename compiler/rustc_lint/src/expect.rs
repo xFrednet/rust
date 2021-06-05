@@ -1,9 +1,10 @@
+use crate::builtin;
 use crate::context::{CheckLintNameResult, LintStore};
+use crate::late::unerased_lint_store;
 use crate::levels::try_parse_reason_metadata;
 use rustc_ast as ast;
 use rustc_ast::unwrap_or;
 use rustc_ast_pretty::pprust;
-use rustc_errors::LintEmission;
 use rustc_hir as hir;
 use rustc_hir::intravisit;
 use rustc_middle::hir::map::Map;
@@ -12,9 +13,17 @@ use rustc_middle::ty::TyCtxt;
 use rustc_session::lint::LintId;
 use rustc_session::Session;
 use rustc_span::symbol::{sym, Symbol};
-use rustc_span::Span;
+use rustc_span::{MultiSpan, Span};
 
-fn check_expect_lint(_tcx: TyCtxt<'_>, (): ()) -> () {
+fn check_expect_lint(tcx: TyCtxt<'_>, (): ()) -> () {
+    // TODO xFrednet 2021-06-05 Take care of crate level attributes
+    // TODO xFrednet 2021-06-05 Deal with macros
+    let store = unerased_lint_store(tcx);
+    let krate = tcx.hir().krate();
+
+    let mut checker = LintExpectationChecker::new(tcx, tcx.sess, store);
+    intravisit::walk_crate(&mut checker, krate);
+
     //    let store = unerased_lint_store(tcx);
     //    let crate_attrs = tcx.hir().attrs(CRATE_HIR_ID);
     //    let levels = LintLevelsBuilder::new(tcx.sess, false, &store, crate_attrs);
@@ -33,6 +42,18 @@ fn check_expect_lint(_tcx: TyCtxt<'_>, (): ()) -> () {
 }
 
 #[derive(Debug, Clone)]
+struct LintIdEmission {
+    lint_id: LintId,
+    span: MultiSpan,
+}
+
+impl LintIdEmission {
+    fn new(lint_id: LintId, span: MultiSpan) -> Self {
+        Self { lint_id, span }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct LintExpectation {
     lints: Vec<LintId>,
     reason: Option<Symbol>,
@@ -45,18 +66,34 @@ impl LintExpectation {
     }
 }
 
-struct ExpectLintChecker<'a, 'tcx> {
+struct LintExpectationChecker<'a, 'tcx> {
     tcx: TyCtxt<'tcx>,
     sess: &'a Session,
     store: &'a LintStore,
-    #[allow(unused)]
-    emitted_lints: Vec<LintEmission>,
+    emitted_lints: Vec<LintIdEmission>,
 }
 
-impl<'a, 'tcx> ExpectLintChecker<'a, 'tcx> {
-    #[allow(unused)]
+impl<'a, 'tcx> Drop for LintExpectationChecker<'a, 'tcx> {
+    fn drop(&mut self) {
+        assert!(self.emitted_lints.is_empty())
+    }
+}
+
+impl<'a, 'tcx> LintExpectationChecker<'a, 'tcx> {
     fn new(tcx: TyCtxt<'tcx>, sess: &'a Session, store: &'a LintStore) -> Self {
-        let emitted_lints = tcx.sess.diagnostic().steal_expect_lint_emissions();
+        let mut expect_lint_emissions = tcx.sess.diagnostic().steal_expect_lint_emissions();
+        let emitted_lints = expect_lint_emissions
+            .drain(..)
+            .filter_map(|emission| {
+                if let CheckLintNameResult::Ok(&[id]) =
+                    store.check_lint_name(&emission.lint_name, None)
+                {
+                    Some(LintIdEmission::new(id, emission.lint_span))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         Self { tcx, sess, store, emitted_lints }
     }
@@ -70,7 +107,7 @@ impl<'a, 'tcx> ExpectLintChecker<'a, 'tcx> {
         f(self);
 
         for expect in expectations.drain(..) {
-            self.check_expectation(expect, scope);
+            self.check_expectation(expect, scope, id);
         }
     }
 
@@ -167,12 +204,47 @@ impl<'a, 'tcx> ExpectLintChecker<'a, 'tcx> {
     }
 
     #[allow(unused)]
-    fn check_expectation(&self, expectation: LintExpectation, scope: Span) {
-        todo!()
+    fn check_expectation(&mut self, expectation: LintExpectation, scope: Span, id: hir::HirId) {
+        let mut fulfilled = false;
+        let mut index = 0;
+        while index < self.emitted_lints.len() {
+            let lint_emission = &self.emitted_lints[index];
+            let lint = &lint_emission.lint_id;
+
+            if expectation.lints.contains(lint) && contains_emission(scope, &lint_emission.span) {
+                drop(self.emitted_lints.swap_remove(index));
+                fulfilled = true;
+
+                // The index is not increase here as the entry in the
+                // index has been changed.
+                continue;
+            }
+            index += 1;
+        }
+
+        if !fulfilled {
+            // TODO xFrednet 2021-06-05: This also has to be added to self.emitted_lints if the level == expect
+            self.tcx.struct_span_lint_hir(
+                builtin::UNFULFILLED_LINT_EXPECTATION,
+                id,
+                expectation.attr_span,
+                |diag| {
+                    let mut diag = diag.build("the lint expectation is unfulfilled");
+                    if let Some(rationale) = expectation.reason {
+                        diag.note(&rationale.as_str());
+                    }
+                    diag.emit();
+                },
+            )
+        }
     }
 }
 
-impl<'tcx> intravisit::Visitor<'tcx> for ExpectLintChecker<'_, 'tcx> {
+fn contains_emission(scope: Span, emission: &MultiSpan) -> bool {
+    emission.primary_spans().iter().any(|span| scope.contains(*span))
+}
+
+impl<'tcx> intravisit::Visitor<'tcx> for LintExpectationChecker<'_, 'tcx> {
     type Map = Map<'tcx>;
 
     fn nested_visit_map(&mut self) -> intravisit::NestedVisitorMap<Self::Map> {
