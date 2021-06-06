@@ -262,11 +262,17 @@ impl<'s> LintLevelsBuilder<'s> {
             // Before processing the lint names, look for a reason (RFC 2383)
             // at the end.
             let tail_li = &metas[metas.len() - 1];
-            let reason = try_parse_reason_metadata(tail_li, self.sess);
-            if reason.is_some() {
-                // found reason, reslice meta list to exclude it
-                metas.pop().unwrap();
-            }
+            let reason = match try_parse_reason_metadata(tail_li, self.sess) {
+                ParseLintReasonResult::Ok(reason) => {
+                    metas.pop().unwrap();
+                    Some(reason)
+                }
+                ParseLintReasonResult::MalformedReason => {
+                    metas.pop().unwrap();
+                    None
+                }
+                ParseLintReasonResult::NotFound => None,
+            };
 
             for li in metas {
                 let sp = li.span();
@@ -547,7 +553,19 @@ impl<'s> LintLevelsBuilder<'s> {
     }
 }
 
-pub(crate) fn try_parse_reason_metadata(item: &NestedMetaItem, sess: &Session) -> Option<Symbol> {
+pub(crate) enum ParseLintReasonResult {
+    /// The reason was found and is returned as part of this value.
+    Ok(Symbol),
+    /// Indicates that the reason field was found but was malformed.
+    MalformedReason,
+    /// The checked item is not a reason field.
+    NotFound,
+}
+
+pub(crate) fn try_parse_reason_metadata(
+    item: &NestedMetaItem,
+    sess: &Session,
+) -> ParseLintReasonResult {
     let bad_attr = |span| struct_span_err!(sess, span, E0452, "malformed lint attribute input");
     if let Some(item) = item.meta_item() {
         match item.kind {
@@ -566,11 +584,12 @@ pub(crate) fn try_parse_reason_metadata(item: &NestedMetaItem, sess: &Session) -
                             )
                             .emit();
                         }
-                        return Some(rationale);
+                        return ParseLintReasonResult::Ok(rationale);
                     } else {
                         bad_attr(name_value.span)
                             .span_label(name_value.span, "reason must be a string literal")
                             .emit();
+                        return ParseLintReasonResult::MalformedReason;
                     }
                 } else {
                     bad_attr(item.span).span_label(item.span, "bad attribute argument").emit();
@@ -582,7 +601,7 @@ pub(crate) fn try_parse_reason_metadata(item: &NestedMetaItem, sess: &Session) -
         }
     }
 
-    None
+    ParseLintReasonResult::NotFound
 }
 
 fn is_known_lint_tool(m_item: Symbol, sess: &Session, attrs: &[ast::Attribute]) -> bool {

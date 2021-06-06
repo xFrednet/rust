@@ -1,7 +1,7 @@
 use crate::builtin;
 use crate::context::{CheckLintNameResult, LintStore};
 use crate::late::unerased_lint_store;
-use crate::levels::try_parse_reason_metadata;
+use crate::levels::{try_parse_reason_metadata, ParseLintReasonResult};
 use rustc_ast as ast;
 use rustc_ast::unwrap_or;
 use rustc_ast_pretty::pprust;
@@ -144,11 +144,17 @@ impl<'a, 'tcx> LintExpectationChecker<'a, 'tcx> {
             // Before processing the lint names, look for a reason (RFC 2383)
             // at the end.
             let tail_li = &metas[metas.len() - 1];
-            let reason = try_parse_reason_metadata(tail_li, self.sess);
-            if reason.is_some() {
-                // found reason, reslice meta list to exclude it
-                metas.pop().unwrap();
-            }
+            let reason = match try_parse_reason_metadata(tail_li, self.sess) {
+                ParseLintReasonResult::Ok(reason) => {
+                    metas.pop().unwrap();
+                    Some(reason)
+                }
+                ParseLintReasonResult::MalformedReason => {
+                    metas.pop().unwrap();
+                    None
+                }
+                ParseLintReasonResult::NotFound => None,
+            };
 
             // This will simply collect the lints specified in the expect attribute.
             // Error handling about unknown renamed and weird lints is done by the
