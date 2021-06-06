@@ -463,6 +463,8 @@ declare_lint! {
     /// ### Example
     ///
     /// ```rust
+    /// #![feature(lint_reasons)]
+    ///
     /// #[expect(unused_variables)]
     /// let x = 10;
     /// println!("{}", x);
