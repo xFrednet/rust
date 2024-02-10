@@ -23,7 +23,7 @@
 #![feature(hash_raw_entry)]
 #![feature(hasher_prefixfree_extras)]
 #![feature(lazy_cell)]
-#![feature(lint_reasons)]
+#![cfg_attr(bootstrap, feature(lint_reasons))]
 #![feature(macro_metavar_expr)]
 #![feature(maybe_uninit_uninit_array)]
 #![feature(min_specialization)]

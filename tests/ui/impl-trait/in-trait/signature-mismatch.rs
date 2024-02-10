@@ -2,7 +2,7 @@
 // revisions: success failure
 //[success] check-pass
 
-#![feature(lint_reasons)]
+#![cfg_attr(bootstrap, feature(lint_reasons))]
 
 use std::future::Future;
 

@@ -1,6 +1,6 @@
 // compile-flags: -Zdeduplicate-diagnostics=yes
 
-#![feature(lint_reasons)]
+#![cfg_attr(bootstrap, feature(lint_reasons))]
 
 #[forbid(unused_variables)]
 //~^ NOTE `forbid` level set here

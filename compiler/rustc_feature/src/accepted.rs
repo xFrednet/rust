@@ -212,6 +212,8 @@ declare_features! (
     (accepted, item_like_imports, "1.15.0", Some(35120)),
     /// Allows `'a: { break 'a; }`.
     (accepted, label_break_value, "1.65.0", Some(48594)),
+    /// Allows using `reason` in lint attributes and the `#[expect(lint)]` lint check.
+    (accepted, lint_reasons, "CURRENT_RUSTC_VERSION", Some(54503)),
     /// Allows `let...else` statements.
     (accepted, let_else, "1.65.0", Some(87335)),
     /// Allows `break {expr}` with a value inside `loop`s.

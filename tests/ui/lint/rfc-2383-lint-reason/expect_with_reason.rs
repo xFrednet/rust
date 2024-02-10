@@ -1,6 +1,6 @@
 // check-pass
 
-#![feature(lint_reasons)]
+#![cfg_attr(bootstrap, feature(lint_reasons))]
 #![warn(unused)]
 
 #![expect(unused_variables, reason = "<This should fail and display this reason>")]

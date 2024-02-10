@@ -1,6 +1,6 @@
 // check-pass
 
-#![feature(lint_reasons)]
+#![cfg_attr(bootstrap, feature(lint_reasons))]
 #![allow(incomplete_features)]
 
 pub trait Foo {

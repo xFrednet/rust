@@ -3,7 +3,7 @@
 // compile-flags: --force-warn unused_mut
 // check-pass
 
-#![feature(lint_reasons)]
+#![cfg_attr(bootstrap, feature(lint_reasons))]
 
 fn expect_early_pass_lint(terminate: bool) {
     #[expect(while_true)]

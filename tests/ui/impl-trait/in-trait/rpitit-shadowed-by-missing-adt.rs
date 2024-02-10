@@ -1,6 +1,6 @@
 // issue: 113903
 
-#![feature(lint_reasons)]
+#![cfg_attr(bootstrap, feature(lint_reasons))]
 
 use std::ops::Deref;
 

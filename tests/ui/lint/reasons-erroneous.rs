@@ -1,6 +1,6 @@
 // compile-flags: -Zdeduplicate-diagnostics=yes
 
-#![feature(lint_reasons)]
+#![cfg_attr(bootstrap, feature(lint_reasons))]
 
 #![warn(absolute_paths_not_starting_with_crate, reason = 0)]
 //~^ ERROR malformed lint attribute

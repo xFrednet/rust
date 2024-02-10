@@ -1,6 +1,6 @@
 // check-pass
 
-#![feature(lint_reasons)]
+#![cfg_attr(bootstrap, feature(lint_reasons))]
 
 fn expect_early_pass_lints() {
     #[expect(while_true)]
